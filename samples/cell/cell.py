@@ -40,7 +40,7 @@ import skimage.io
 import zipfile
 # import urllib.request
 import shutil
-
+from skimage.util import img_as_ubyte
 # Root directory of the project
 ROOT_DIR = os.path.abspath("../../")
 
@@ -73,7 +73,7 @@ class cellConfig(Config):
 
     # We use a GPU with 12GB memory, which can fit two images.
     # Adjust down if you use a smaller GPU.
-    IMAGES_PER_GPU = 2
+    IMAGES_PER_GPU = 4
 
 #     config.IMAGE_SHAPE
     # Uncomment to train on 8 GPUs (default is 1)
@@ -84,22 +84,24 @@ class cellConfig(Config):
     # Train on 1 GPU and 8-->2 images per GPU. We can put multiple images on each
     # GPU because the images are small. Batch size is 8-->2 (GPUs * images/GPU).
     GPU_COUNT = 1
-    IMAGES_PER_GPU = 8
+    IMAGES_PER_GPU = 2
 
     # Number of classes (including background)
-    NUM_CLASSES = 1 + 20  # background + 3 shapes
+    NUM_CLASSES = 1 + 19  # background + 3 shapes
 
     # Use small images for faster training. Set the limits of the small side
     # the large side, and that determines the image shape.
-    IMAGE_MIN_DIM = 16
-    IMAGE_MAX_DIM = 128
-    numOchannels=4;
+    IMAGE_MIN_DIM = 1024
+    IMAGE_MAX_DIM = 1024
+#     numOchannels=4;
     # Use smaller anchors because our image and objects are small
-    RPN_ANCHOR_SCALES = (16, 32, 64,128,256)  # anchor side in pixels
+    RPN_ANCHOR_SCALES = (8,16, 32, 64,128)  # anchor side in pixels
 #    RPN_ANCHOR_SCALES = (32, 64,128,256)  # anchor side in pixels
     # Reduce training ROIs per image because the images are small and have
     # few objects. Aim to allow ROI sampling to pick 33% positive ROIs.
-    TRAIN_ROIS_PER_IMAGE = 32
+    BACKBONE_STRIDES = [4, 8, 16, 32, 64]
+    
+    TRAIN_ROIS_PER_IMAGE = 128
 
     # Use a small epoch since the data is simple
     STEPS_PER_EPOCH = 100
@@ -108,6 +110,13 @@ class cellConfig(Config):
     VALIDATION_STEPS = 5
 #    head='def'; #'def','unet'
 
+
+    IMAGE_CHANNEL_COUNT = 3
+
+    # Image mean (RGB)
+#     MEAN_PIXEL = np.array([123.7, 116.8, 103.9])
+    MEAN_PIXEL =np.ones((IMAGE_CHANNEL_COUNT,), dtype=int)*128;
+#     IMAGE_META_SIZE = 1 + 3 + 3 + 4 + 1 + NUM_CLASSES-1
 ############################################################
 #  Dataset
 ############################################################
@@ -134,8 +143,11 @@ class cellsDataset(utils.Dataset):
             subset = "val"
 
 #         if subset == "train":
+        df_Info_t = df_Info[df_Info['subset_label']=="train"];
+        cell_train = CellClass.CELL(df_Info_t)
+        
         df_Info = df_Info[df_Info['subset_label']==subset];
-            
+#         print(df_Info.shape) 
         cell = CellClass.CELL(df_Info)
 
         
@@ -144,22 +156,36 @@ class cellsDataset(utils.Dataset):
         # Load all classes or a subset?
         if not class_ids:
             # All classes
-            class_ids = sorted(cell.getCatIds())
+#             if subset == "train" or subset == "val":
+            class_ids = sorted(cell_train.getCatIds())
+#             else:
+#                 class_ids = sorted(cell.getCatIds())
+        
+#         print(class_ids)
+            
 
         # All images or a subset?
         if class_ids:
             image_ids = []
             for id in class_ids:
+                
                 image_ids.extend(list(cell.getImgIds(catIds=[id])))
+#                 print(image_ids,id)
             # Remove duplicates
             image_ids = list(set(image_ids))
         else:
             # All images
             image_ids = list(cell.imgs.keys())
-
+            
+#         if subset == "test":   
+#             image_ids = list(cell.imgs.keys())
+#         print(image_ids)
         # Add classes
         for i in class_ids:
-            self.add_class("cell", i, cell.loadCats(i)[0]["name"])
+#             if subset == "train" or subset == "val":
+              self.add_class("cell", i, cell_train.loadCats(i)[0]["name"])
+#             else:
+#                 self.add_class("cell", i, cell.loadCats(i)[0]["name"])
 
         # Add images
         for i in image_ids:
@@ -187,15 +213,20 @@ class cellsDataset(utils.Dataset):
 
         listOfPaths=literal_eval(self.image_info[image_id]['path'])
 #         print(len(listOfPaths))
-#         image=np.zeros(())
+        listOfPaths=[listOfPaths[0],listOfPaths[2],listOfPaths[1]]
+#         listOfPaths=[listOfPaths[2]]
         imagesList=[]
         for imPath in listOfPaths:
 #             print(imPath)
-            imagesList.append(skimage.io.imread(imPath))
+            im_uint16=skimage.io.imread(imPath) # images are 'uint16'
+        # if you want to convert to unit8
+            im_uint8=img_as_ubyte(im_uint16)
+            imagesList.append(im_uint8)
         # If grayscale. Convert to RGB for consistency.
 #         if image.ndim != 3:
 #             image = skimage.color.gray2rgb(image)
         image=np.stack(imagesList, axis=2)
+
         return image
 
     def load_mask(self, image_id):
@@ -373,142 +404,3 @@ def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=Non
     print("Prediction time: {}. Average {}/image".format(
         t_prediction, t_prediction / len(image_ids)))
     print("Total time: ", time.time() - t_start)
-
-
-############################################################
-#  Training
-############################################################
-
-
-if __name__ == '__main__':
-    import argparse
-
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(
-        description='Train Mask R-CNN on MS COCO.')
-    parser.add_argument("command",
-                        metavar="<command>",
-                        help="'train' or 'evaluate' on MS COCO")
-    parser.add_argument('--dataset', required=True,
-                        metavar="/path/to/coco/",
-                        help='Directory of the MS-COCO dataset')
-    parser.add_argument('--model', required=True,
-                        metavar="/path/to/weights.h5",
-                        help="Path to weights .h5 file or 'coco'")
-    parser.add_argument('--logs', required=False,
-                        default=DEFAULT_LOGS_DIR,
-                        metavar="/path/to/logs/",
-                        help='Logs and checkpoints directory (default=logs/)')
-    parser.add_argument('--limit', required=False,
-                        default=500,
-                        metavar="<image count>",
-                        help='Images to use for evaluation (default=500)')
-    parser.add_argument('--download', required=False,
-                        default=False,
-                        metavar="<True|False>",
-                        help='Automatically download and unzip MS-COCO files (default=False)',
-                        type=bool)
-    args = parser.parse_args()
-    print("Command: ", args.command)
-    print("Model: ", args.model)
-    print("Dataset: ", args.dataset)
-    print("Year: ", args.year)
-    print("Logs: ", args.logs)
-    print("Auto Download: ", args.download)
-
-    # Configurations
-    if args.command == "train":
-        config = CocoConfig()
-    else:
-        class InferenceConfig(CocoConfig):
-            # Set batch size to 1 since we'll be running inference on
-            # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
-            GPU_COUNT = 1
-            IMAGES_PER_GPU = 1
-            DETECTION_MIN_CONFIDENCE = 0
-        config = InferenceConfig()
-    config.display()
-
-    # Create model
-    if args.command == "train":
-        model = modellib.MaskRCNN(mode="training", config=config,
-                                  model_dir=args.logs)
-    else:
-        model = modellib.MaskRCNN(mode="inference", config=config,
-                                  model_dir=args.logs)
-
-    # Select weights file to load
-    if args.model.lower() == "coco":
-        model_path = COCO_MODEL_PATH
-    elif args.model.lower() == "last":
-        # Find last trained weights
-        model_path = model.find_last()
-    elif args.model.lower() == "imagenet":
-        # Start from ImageNet trained weights
-        model_path = model.get_imagenet_weights()
-    else:
-        model_path = args.model
-
-    # Load weights
-    print("Loading weights ", model_path)
-    model.load_weights(model_path, by_name=True)
-
-    # Train or evaluate
-    if args.command == "train":
-        # Training dataset. Use the training set and 35K from the
-        # validation set, as as in the Mask RCNN paper.
-        dataset_train = CocoDataset()
-        dataset_train.load_coco(args.dataset, "train", year=args.year, auto_download=args.download)
-        if args.year in '2014':
-            dataset_train.load_coco(args.dataset, "valminusminival", year=args.year, auto_download=args.download)
-        dataset_train.prepare()
-
-        # Validation dataset
-        dataset_val = CocoDataset()
-        val_type = "val" if args.year in '2017' else "minival"
-        dataset_val.load_coco(args.dataset, val_type, year=args.year, auto_download=args.download)
-        dataset_val.prepare()
-
-        # Image Augmentation
-        # Right/Left flip 50% of the time
-        augmentation = imgaug.augmenters.Fliplr(0.5)
-
-        # *** This training schedule is an example. Update to your needs ***
-
-        # Training - Stage 1
-        print("Training network heads")
-        model.train(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE,
-                    epochs=40,
-                    layers='heads',
-                    augmentation=augmentation)
-
-        # Training - Stage 2
-        # Finetune layers from ResNet stage 4 and up
-        print("Fine tune Resnet stage 4 and up")
-        model.train(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE,
-                    epochs=120,
-                    layers='4+',
-                    augmentation=augmentation)
-
-        # Training - Stage 3
-        # Fine tune all layers
-        print("Fine tune all layers")
-        model.train(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE / 10,
-                    epochs=160,
-                    layers='all',
-                    augmentation=augmentation)
-
-    elif args.command == "evaluate":
-        # Validation dataset
-        dataset_val = CocoDataset()
-        val_type = "val" if args.year in '2017' else "minival"
-        coco = dataset_val.load_coco(args.dataset, val_type, year=args.year, return_coco=True, auto_download=args.download)
-        dataset_val.prepare()
-        print("Running COCO evaluation on {} images.".format(args.limit))
-        evaluate_coco(model, dataset_val, coco, "bbox", limit=int(args.limit))
-    else:
-        print("'{}' is not recognized. "
-              "Use 'train' or 'evaluate'".format(args.command))

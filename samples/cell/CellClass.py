@@ -86,11 +86,11 @@ def convertAnnot2dict(dfInfo):
     annotDf[['image_id','bbox','category_id','P-W-S','ObjectNumber','mask']]=dfInfo[['image_id','bbox','cat_id','P-W-S','ObjectNumber','mask']]
     annotDf['id']=annotDf.index+1
     dataset['annotations']=annotDf.to_dict(orient='records')
-
+#     print('hey',dataset['annotations'])
     
     ########## form cat dict    
     categDf=pd.DataFrame(columns=['supercategory','id','name'])
-    categDf[['id','name']]=dfInfo[['cat_id','Metadata_Location']].drop_duplicates(ignore_index=True)
+    categDf[['id','name']]=dfInfo[['cat_id','Metadata_Label']].drop_duplicates(ignore_index=True)
     categDf['supercategory']='cell'
     dataset['categories']=categDf.to_dict(orient='records')
     
