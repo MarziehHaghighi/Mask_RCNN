@@ -906,3 +906,22 @@ def resize(image, output_shape, order=1, mode='constant', cval=0, clip=True,
             image, output_shape,
             order=order, mode=mode, cval=cval, clip=clip,
             preserve_range=preserve_range)
+    
+    
+def NMI_clus_class(target_class_ids,target_class_ids2):
+#     print("target_class_ids",target_class_ids)
+#     print("target_class_ids2",target_class_ids2)
+    from sklearn.metrics.cluster import normalized_mutual_info_score
+#     print("len",len(target_class_ids.shape))
+    if len(target_class_ids.shape)>1:
+        sh=target_class_ids.shape
+        target_class_ids=target_class_ids.reshape(sh[0]*sh[1],)
+        target_class_ids2=target_class_ids2.reshape(sh[0]*sh[1],)
+#     print(target_class_ids)
+#     print(normalized_mutual_info_score(target_class_ids,target_class_ids2))
+
+    if list(target_class_ids)==list(target_class_ids2):
+        nmi=np.float32(1)
+    else:
+        nmi=normalized_mutual_info_score(target_class_ids,target_class_ids2).astype('float32')
+    return nmi

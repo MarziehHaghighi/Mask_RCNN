@@ -32,7 +32,8 @@ from mrcnn import utils
 from distutils.version import LooseVersion
 assert LooseVersion(tf.__version__) >= LooseVersion("1.3")
 assert LooseVersion(keras.__version__) >= LooseVersion('2.0.8')
-
+# tf.compat.v1.enable_v2_behavior()
+# tf.compat.v1.enable_v2_behavior()
 
 ############################################################
 #  Utility Functions
@@ -666,8 +667,8 @@ class DetectionTargetLayer(KE.Layer):
                 w, x, y, z, self.config),
             self.config.IMAGES_PER_GPU, names=names)
         
-        print("gt_class_ids",gt_class_ids)
-        print("target_class_ids",outputs[1])
+#         print("gt_class_ids",gt_class_ids)
+#         print("target_class_ids",outputs[1])
         
         return outputs
 
@@ -961,8 +962,91 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
     print("mrcnn_class_logits",mrcnn_class_logits)
     return mrcnn_class_logits, mrcnn_probs, mrcnn_bbox
 
+def calculate_cluster_centroids(feat,labels,nClust):
+    # feat (n_samples,n_features)
+    # labels (n_samples,)
+#     nClust=np.max(labels)+1
+    cents=np.empty((nClust,feat.shape[1]))
+    cents[:] = np.nan
+    for c in range(nClust):
+        class_samples=feat[labels==c,:]
+        if class_samples.shape[0]!=0:
+            cents[c,:]=np.mean(class_samples,axis=0)
+    return cents  
+    
 
-def reas_labels(clustering_labels,pred_labels_arr,bkg_c_i):
+def reas_labels3(clustering_labels,pred_labels_arr,kmeans_centers,X,n_cl):
+    from sklearn.neighbors import DistanceMetric
+    dist = DistanceMetric.get_metric('euclidean')
+#     # a[nan_index_a,:]=np.nan
+#     b[nan_index_b,:]=np.nan
+#     clustering_labels_cents=calculate_cluster_centroids(X,clustering_labels)
+#     clustering_labels_cents=calculate_cluster_centroids(X,clustering_labels)
+    pred_labels_arr_cents=calculate_cluster_centroids(X,pred_labels_arr,n_cl+1)
+    distMat=dist.pairwise(kmeans_centers,pred_labels_arr_cents[1:,:])
+    distMat=distMat/np.nansum(distMat,axis=0)
+    map_dict={}
+    ordered_ass=np.argsort(distMat,axis=1)
+    min_dist_clusters=np.nanargmin(distMat,axis=1)
+    min_dist=np.nanmin(distMat,axis=1)
+    confid_ordered_labels = np.argsort(min_dist)
+    # non_nan_indexes=np.delete(range(5), 1)
+    non_nan_indexes=list(range(n_cl))
+    for ci in range(n_cl):
+    #     min_dist_clusters[ci]
+        ind_cluster_to_ass=confid_ordered_labels[ci]
+        if min_dist_clusters[ind_cluster_to_ass] in non_nan_indexes:
+            map_dict[ind_cluster_to_ass]=min_dist_clusters[ind_cluster_to_ass]
+            non_nan_indexes.remove(min_dist_clusters[ind_cluster_to_ass])
+        else:
+            i=1
+            while ordered_ass[ind_cluster_to_ass,i] not in non_nan_indexes:
+                i += 1
+    #         for i in range(1,5):
+            to_cl=ordered_ass[ind_cluster_to_ass,i]
+            map_dict[ind_cluster_to_ass]=to_cl
+            non_nan_indexes.remove(to_cl)
+
+#     print(map_dict,clustering_labels)
+    reassigned_labels=np.vectorize(map_dict.get)(clustering_labels)
+#     print(reassigned_labels)
+    return reassigned_labels+1
+
+
+def reas_labels2(clustering_labels,pred_labels_arr):
+    from sklearn.neighbors import DistanceMetric
+    dist = DistanceMetric.get_metric('hamming')
+#     print(utils.NMI_clus_class(clustering_labels,pred_labels_arr))
+#     print("shape",clustering_labels,pred_labels_arr)
+    map_dict={}
+    clus_uniq_labels=np.unique(clustering_labels)
+    clus_uniq_labels_list=list(clus_uniq_labels)
+    n_clus=len(clus_uniq_labels)
+    haming_based_clus=[]
+    for ci in range(n_clus):
+        clustering_labels_binary=100*np.ones(clustering_labels.shape)
+        c=clus_uniq_labels[ci]
+        clustering_labels_binary[clustering_labels==c]=1
+        haming_bin_clus=[]
+        for ci2 in range(len(clus_uniq_labels_list)):
+            pred_labels_arr_binary=100*np.ones(clustering_labels.shape)
+            c2=clus_uniq_labels_list[ci2]
+            pred_labels_arr_binary[pred_labels_arr==c2]=1        
+            haming_bin_clus.append(dist.pairwise([pred_labels_arr_binary,clustering_labels_binary])[0,1])
+        
+        best_cluster_based_on_haming=clus_uniq_labels_list[np.argmin(haming_bin_clus)]
+        clus_uniq_labels_list.remove(best_cluster_based_on_haming)
+        
+#         print("haming_bin_clus",haming_bin_clus)
+        haming_based_clus.append(best_cluster_based_on_haming)
+        map_dict[c]=best_cluster_based_on_haming
+        
+#     print("map_dict",map_dict)
+#     print("clustering_labels",clustering_labels)
+    reassigned_labels=np.vectorize(map_dict.get)(clustering_labels)
+    return reassigned_labels
+
+def reas_labels(clustering_labels, pred_labels_arr, bkg_c_i):
     from sklearn.neighbors import DistanceMetric
     dist = DistanceMetric.get_metric('hamming')
 #     print("shape",clustering_labels,pred_labels_arr)
@@ -1075,106 +1159,19 @@ def fpn_clustering_graph(rois, feature_maps, image_meta,
     shared = KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 3), 2),
                        name="pool_squeeze")(x)
     print("shared",shared)
-#     num_clusters=4
-#     tensor_to_cluster0=tf.reshape(shared,(shared.shape[0]*shared.shape[2],shared.shape[1]))
-#     print("tensor_to_cluster0",tensor_to_cluster0)
-#     kmeans = tf.contrib.factorization.KMeans(
-#       shared,
-#       num_clusters,
-#       distance_metric=tf.contrib.factorization.COSINE_DISTANCE,
-#       # TODO(agarwal): kmeans++ is currently causing crash in dbg mode.
-#       # Enable this after fixing.
-#       # initial_clusters=tf.contrib.factorization.KMEANS_PLUS_PLUS_INIT,
-#       use_mini_batch=True)
-    
-#     kmeans.fit(steps=5000)
-#     kmeans.predict_cluster_idx
-# #     all_scores, _, clustering_scores, kmeans_training_op = kmeans.training_graph()
-    
-#     print('here',all_scores, _, clustering_scores, kmeans_training_op)
-    
-#     clustering_labels=kmeans_on_feats(shared,num_clusters)
-    nClust=5;
-    def sklearn_kmeans(X,pred_class_ids,gt_ids):
-        gt_ids_vec=gt_ids.flatten()
-      # X (n_samples, n_features)
-#         print("Input Shape",X.shape)
-#         print("pred_class_ids Shape",pred_class_ids.shape)
-#         print(pred_class_ids)
-        feat_arr = X.reshape(X.shape[0]*X.shape[1],X.shape[2])
-#         pred_labels_arr = pred_class_ids.reshape(X.shape[0]*X.shape[1],)
-        pred_labels_arr = pred_class_ids.flatten()
-#         print("pred_labels_arr",pred_labels_arr)
-        from sklearn.cluster import KMeans
-        from sklearn import preprocessing
-        from sklearn.preprocessing import label_binarize
-        from sklearn.decomposition import PCA
-        
-        if 0:
-#             print("feat_arr",feat_arr.shape)
-            pca = PCA(n_components=64, whiten=True)
-            x_pca=pca.fit_transform(feat_arr)
-            norm = np.linalg.norm(x_pca, axis=1)
-            feat_arr = x_pca / norm[:, np.newaxis]
-#             print("feat_arr",feat_arr.shape)
-        
-        def calculate_cluster_centroids(feat,labels):
-            # feat (n_samples,n_features)
-            # labels (n_samples,)
-            
-            cents=np.zeros((nClust,feat.shape[1]))
-            for c in range(nClust):
-                class_samples=feat[labels==c,:]
-                if class_samples.shape[0]!=0:
-                    cents[c,:]=np.mean(class_samples,axis=0)
-            return cents  
-        
-        def find_background_cluster(gt_center,cluster_centers):
-            from numpy import linalg as LA
-            bkg_c_i=np.argmin(LA.norm(cluster_centers-gt_center,1,axis=1))
-            return bkg_c_i
-        
-        cents= calculate_cluster_centroids(feat_arr,pred_labels_arr)    
-#         print(cents)            
-#         kmeans = KMeans(n_clusters=nClust, random_state=0,init=cents).fit(feat_arr)
-        kmeans = KMeans(n_clusters=nClust, random_state=0).fit(feat_arr)
-        
-        bkg_c_i=find_background_cluster(np.mean(feat_arr[gt_ids_vec==0,:],axis=0),\
-                                        kmeans.cluster_centers_)        
-        
-        reassigned_labels=reas_labels(kmeans.labels_,pred_labels_arr,bkg_c_i)
-        print("reassigned_labels",reassigned_labels)
-        print("gt_ids",gt_ids)
-        reassigned_labels_reshape=reassigned_labels.reshape(X.shape[0],X.shape[1])
-#         print(kmeans.labels_.shape,reassigned_labels.shape)
-#         lb = preprocessing.LabelBinarizer()
-#         one_hot_labels=lb.fit_transform(reassigned_labels).astype('float32')
-        one_hot_labels=label_binarize(reassigned_labels, classes=range(nClust)).astype('float32')
-#         print(one_hot_labels.dtype,one_hot_labels.shape)
-#         print(X.shape[0],X.shape[1],one_hot_labels.shape[1])
-        one_hot_labels2=one_hot_labels.reshape(X.shape[0],X.shape[1],one_hot_labels.shape[1])
-#         print(reassigned_labels_reshape.shape)
-#         print("kmeans.labels",kmeans.labels_)
-#         print("reassigned_labels",reassigned_labels)
-        
-        return reassigned_labels_reshape.astype('int32')
-#         return kmeans.labels_.reshape(X.shape[0],X.shape[1])
+#     nClust=5;
 
-    
-#     input = tf.compat.v1.placeholder(tf.float32)
-#     clustering_labels = tf.compat.v1.py_func(my_func, [input], tf.float32)
-#     clustering_labels= tf.py_func(func=sklearn_kmeans,inp=[shared],\
-#                                            Tout=[tf.float32],name='kmeansclus')
-    
+
     def my_lambda_func(x,pred_class_ids,gt_ids):
-        clustering_labels= tf.py_func(func=sklearn_kmeans,inp=[x,pred_class_ids,gt_ids],\
+        clustering_labels= tf.py_func(func=sklearn_kmeans_foreground,inp=[x,pred_class_ids,gt_ids,num_classes],\
                                            Tout=[tf.int32],name='kmeansclus')
 #         clustering_labels.set_shape(x.get_shape())
         return clustering_labels
 
     # Classifier head
-    mrcnn_class_logits = KL.TimeDistributed(KL.Dense(num_classes),
-                                            name='mrcnn_class_logits')(shared)
+    mrcnn_class_logits = KL.TimeDistributed(KL.Dense(num_classes),name='mrcnn_class_logits')(shared)
+    
+    
     pred_class_ids = tf.argmax(mrcnn_class_logits, name="pred_4_lambda_layer", axis=2)
     print("pred_class_ids",pred_class_ids)
     sh = K.int_shape(mrcnn_class_logits)
@@ -1186,9 +1183,9 @@ def fpn_clustering_graph(rois, feature_maps, image_meta,
 #     clustering_labels_logits = KL.Lambda(lambda x: my_lambda_func(x,pred_class_ids),shape=[None,config.TRAIN_ROIS_PER_IMAGE,config.NUM_CLASSES], name="lambda_layer")(shared)
 #     clustering_psudo_labels.set_shape([None,sh[1],sh[2]])
     clustering_psudo_labels.set_shape([None,sh[1]])
-    print("clustering_labels",clustering_psudo_labels)
-    mrcnn_probs = KL.TimeDistributed(KL.Activation("softmax"),
-                                     name="mrcnn_class")(mrcnn_class_logits)
+#     print("clustering_labels",clustering_psudo_labels)
+    
+    mrcnn_probs = KL.TimeDistributed(KL.Activation("softmax"),name="mrcnn_class")(mrcnn_class_logits)
 
     # BBox head
     # [batch, num_rois, NUM_CLASSES * (dy, dx, log(dh), log(dw))]
@@ -1203,101 +1200,123 @@ def fpn_clustering_graph(rois, feature_maps, image_meta,
 #     return clustering_labels_logits, clustering_labels_logits, mrcnn_bbox
 
 
+def sklearn_kmeans_foreground(X,pred_class_ids,gt_ids,nClust):
+    from sklearn.cluster import KMeans
+    from sklearn import preprocessing
+    from sklearn.decomposition import PCA    
+    #     inputs
+    # X              (n_batches, n_samples_perbacth, n_features)
+    # feat_arr       (n_samples, n_features)
+    # gt_ids         (n_batches, n_samples_perbacth)
+    # pred_class_ids (n_batches, n_samples_perbacth)
+    #
+    #     Output
+    # psudo_labels_based_on_clustering
+    
+    
+#     nClust=5
+    n_samples=X.shape[0]*X.shape[1]
+    n_feats=X.shape[2]
+#     print("gt_ids",gt_ids)
+    gt_ids_vec=gt_ids.flatten()
+    feat_arr = X.reshape(n_samples,n_feats)
+    pred_labels_arr = pred_class_ids.flatten()
+#         print("pred_labels_arr",pred_labels_arr)
+
+    if 1:
+        pca = PCA(n_components=64, whiten=True)
+        x_pca=pca.fit_transform(feat_arr)
+        norm = np.linalg.norm(x_pca, axis=1)
+        feat_arr = x_pca / norm[:, np.newaxis]
+
+
+    psudo_labels_based_on_clustering=np.zeros(n_samples)
+    forg_index=np.where(gt_ids_vec!=0)[0]
+    feat_arr_forg=feat_arr[forg_index,:]
+#     print("forg_index",forg_index,feat_arr_forg.shape)
+    
+    if len(forg_index)>nClust:
+        kmeans = KMeans(n_clusters=nClust-1, random_state=0).fit(feat_arr_forg)
+        psudo_labels_based_on_clustering[forg_index]=kmeans.labels_+1
+    else:
+        psudo_labels_based_on_clustering[forg_index]=pred_labels_arr[forg_index]
+        
+        
+    if len(forg_index)>0:
+#         reassigned_labels=reas_labels2(psudo_labels_based_on_clustering[forg_index],\
+#                                        pred_labels_arr[forg_index])
+
+        reassigned_labels=reas_labels3(kmeans.labels_,\
+                                       pred_labels_arr[forg_index],kmeans.cluster_centers_,feat_arr_forg,nClust-1)
+# (clustering_labels,kmeans_centers,X)
+        psudo_labels_based_on_clustering[forg_index]=reassigned_labels
+    
+    psudo_labels_based_on_clustering_reshaped=psudo_labels_based_on_clustering.\
+    reshape(X.shape[0],X.shape[1]).astype('int32')
+    
+#     print("psudo_labels_based_on_clustering_reshaped",psudo_labels_based_on_clustering_reshaped)
+#     print("nmi: ",utils.NMI_clus_class(psudo_labels_based_on_clustering[forg_index],gt_ids_vec[forg_index]))
+    return psudo_labels_based_on_clustering_reshaped
+
+
+def sklearn_kmeans(X,pred_class_ids,gt_ids):
+    nClust=5
+    print("gt_ids",gt_ids)
+    gt_ids_vec=gt_ids.flatten()
+  # X (n_samples, n_features)
+#         print("Input Shape",X.shape)
+#         print("pred_class_ids Shape",pred_class_ids.shape)
+#         print(pred_class_ids)
+    feat_arr = X.reshape(X.shape[0]*X.shape[1],X.shape[2])
+#         pred_labels_arr = pred_class_ids.reshape(X.shape[0]*X.shape[1],)
+    pred_labels_arr = pred_class_ids.flatten()
+#         print("pred_labels_arr",pred_labels_arr)
+    from sklearn.cluster import KMeans
+    from sklearn import preprocessing
+    from sklearn.preprocessing import label_binarize
+    from sklearn.decomposition import PCA
+
+    if 0:
+#             print("feat_arr",feat_arr.shape)
+        pca = PCA(n_components=64, whiten=True)
+        x_pca=pca.fit_transform(feat_arr)
+        norm = np.linalg.norm(x_pca, axis=1)
+        feat_arr = x_pca / norm[:, np.newaxis]
+#             print("feat_arr",feat_arr.shape)
 
 
 
+    def find_background_cluster(gt_center,cluster_centers):
+        from numpy import linalg as LA
+        bkg_c_i=np.argmin(LA.norm(cluster_centers-gt_center,1,axis=1))
+        return bkg_c_i
 
-# def kmeans_on_feats0(shared,k):
-#     tensor_to_cluster0=tf.reshape(shared,(shared.shape[2],shared.shape[1]), name=None)
-#     tensor_to_cluster=K.eval(tensor_to_cluster0)
-#     print('here',tensor_to_cluster0.shape)
-#     input_fn=lambda: tf.train.limit_epochs(tensor_to_cluster, num_epochs=1)
-#     kmeans=tf.contrib.factorization.KMeansClustering(num_clusters=k,use_mini_batch=False)
-#     previous_centers = None
-#     for _ in range(10):
-#         kmeans.train(input_fn)
-#         centers = kmeans.cluster_centers()
-# #   if previous_centers is not None:
-# #     print 'delta:', centers - previous_centers
-# #   previous_centers = centers
-# #   print 'score:', kmeans.score(input_fn)
-# # print 'centers:', centers
-#     cluster_indices = list(kmeans.predict_cluster_index(input_fn))
-#     return cluster_indices
+    cents= calculate_cluster_centroids(feat_arr,pred_labels_arr)    
+#         print(cents)            
+#         kmeans = KMeans(n_clusters=nClust, random_state=0,init=cents).fit(feat_arr)
+    kmeans = KMeans(n_clusters=nClust, random_state=0).fit(feat_arr)
 
-# def kmeans_on_feats(shared,n_clusters):
-#     tensor_to_cluster0=tf.reshape(shared,(shared.shape[2],shared.shape[1]), name=None)
-#     clustering_layer = ClusteringLayer(n_clusters, name='clustering')(tensor_to_cluster0)
-#     model_km = Model(inputs=tensor_to_cluster0, outputs=clustering_layer)
-#     # Initialize cluster centers using k-means.
-#     kmeans = KMeans(n_clusters=n_clusters, n_init=20)
-#     y_pred = kmeans.fit_predict(encoder.predict(x))
-#     model_km.get_layer(name='clustering').set_weights([kmeans.cluster_centers_])
-#     return cluster_indices
+    bkg_c_i=find_background_cluster(np.mean(feat_arr[gt_ids_vec==0,:],axis=0),\
+                                    kmeans.cluster_centers_)        
 
+    reassigned_labels=reas_labels(kmeans.labels_,pred_labels_arr,bkg_c_i)
+    print("reassigned_labels",reassigned_labels)
+    print("gt_ids",gt_ids)
+    reassigned_labels_reshape=reassigned_labels.reshape(X.shape[0],X.shape[1])
+#         print(kmeans.labels_.shape,reassigned_labels.shape)
+#         lb = preprocessing.LabelBinarizer()
+#         one_hot_labels=lb.fit_transform(reassigned_labels).astype('float32')
+    one_hot_labels=label_binarize(reassigned_labels, classes=range(nClust)).astype('float32')
+#         print(one_hot_labels.dtype,one_hot_labels.shape)
+#         print(X.shape[0],X.shape[1],one_hot_labels.shape[1])
+    one_hot_labels2=one_hot_labels.reshape(X.shape[0],X.shape[1],one_hot_labels.shape[1])
+#         print(reassigned_labels_reshape.shape)
+#         print("kmeans.labels",kmeans.labels_)
+#         print("reassigned_labels",reassigned_labels)
 
-# class ClusteringLayer(Layer):
-#     """
-#     author/refrence:
-#     https://www.dlology.com/blog/how-to-do-unsupervised-clustering-with-keras/
-#     Clustering layer converts input sample (feature) to soft label.
+    return reassigned_labels_reshape.astype('int32')
+#         return kmeans.labels_.reshape(X.shape[0],X.shape[1])
 
-#     # Example
-#     ```
-#         model.add(ClusteringLayer(n_clusters=10))
-#     ```
-#     # Arguments
-#         n_clusters: number of clusters.
-#         weights: list of Numpy array with shape `(n_clusters, n_features)` witch represents the initial cluster centers.
-#         alpha: degrees of freedom parameter in Student's t-distribution. Default to 1.0.
-#     # Input shape
-#         2D tensor with shape: `(n_samples, n_features)`.
-#     # Output shape
-#         2D tensor with shape: `(n_samples, n_clusters)`.
-#     """
-
-#     def __init__(self, n_clusters, weights=None, alpha=1.0, **kwargs):
-#         if 'input_shape' not in kwargs and 'input_dim' in kwargs:
-#             kwargs['input_shape'] = (kwargs.pop('input_dim'),)
-#         super(ClusteringLayer, self).__init__(**kwargs)
-#         self.n_clusters = n_clusters
-#         self.alpha = alpha
-#         self.initial_weights = weights
-#         self.input_spec = InputSpec(ndim=2)
-
-#     def build(self, input_shape):
-#         assert len(input_shape) == 2
-#         input_dim = input_shape[1]
-#         self.input_spec = InputSpec(dtype=K.floatx(), shape=(None, input_dim))
-#         self.clusters = self.add_weight((self.n_clusters, input_dim), initializer='glorot_uniform', name='clusters')
-#         if self.initial_weights is not None:
-#             self.set_weights(self.initial_weights)
-#             del self.initial_weights
-#         self.built = True
-
-#     def call(self, inputs, **kwargs):
-#         """ student t-distribution, as same as used in t-SNE algorithm.        
-#                  q_ij = 1/(1+dist(x_i, µ_j)^2), then normalize it.
-#                  q_ij can be interpreted as the probability of assigning sample i to cluster j.
-#                  (i.e., a soft assignment)
-#         Arguments:
-#             inputs: the variable containing data, shape=(n_samples, n_features)
-#         Return:
-#             q: student's t-distribution, or soft labels for each sample. shape=(n_samples, n_clusters)
-#         """
-#         q = 1.0 / (1.0 + (K.sum(K.square(K.expand_dims(inputs, axis=1) - self.clusters), axis=2) / self.alpha))
-#         q **= (self.alpha + 1.0) / 2.0
-#         q = K.transpose(K.transpose(q) / K.sum(q, axis=1)) # Make sure each sample's 10 values add up to 1.
-#         return q
-
-#     def compute_output_shape(self, input_shape):
-#         assert input_shape and len(input_shape) == 2
-#         return input_shape[0], self.n_clusters
-
-#     def get_config(self):
-#         config = {'n_clusters': self.n_clusters}
-#         base_config = super(ClusteringLayer, self).get_config()
-#         return dict(list(base_config.items()) + list(config.items()))
     
 def build_fpn_mask_graph(rois, feature_maps, image_meta,
                          pool_size, num_classes, train_bn=True):
@@ -2221,6 +2240,7 @@ class MaskRCNN():
         self.model_dir = model_dir
         self.set_log_dir()
         self.keras_model = self.build(mode=mode, config=config)
+        self.Lambda_callbacks=[]
 
     def build(self, mode, config):
         """Build Mask R-CNN architecture.
@@ -2379,14 +2399,14 @@ class MaskRCNN():
             print("target_class_ids",target_class_ids)
             # Network Heads
             # TODO: verify that this handles zero padded ROIs
-            def NMI_clus_class(target_class_ids,target_class_ids2):
-                print("target_class_ids",target_class_ids)
-                print("target_class_ids2",target_class_ids2)
-                from sklearn.metrics.cluster import normalized_mutual_info_score
-                nmi=normalized_mutual_info_score(target_class_ids,target_class_ids2)
-                return nmi
+#             def NMI_clus_class(target_class_ids,target_class_ids2):
+#                 print("target_class_ids",target_class_ids)
+#                 print("target_class_ids2",target_class_ids2)
+#                 from sklearn.metrics.cluster import normalized_mutual_info_score
+#                 nmi=normalized_mutual_info_score(target_class_ids,target_class_ids2)
+#                 return nmi
             def lambda_nmi(target_classes):
-                NMI= tf.py_func(func=NMI_clus_class,inp=[target_classes[0],target_classes[1]],\
+                NMI= tf.py_func(func=utils.NMI_clus_class,inp=[target_classes[0],target_classes[1]],\
                                        Tout=[tf.float32],name='nmi')
                 return NMI
             
@@ -2420,7 +2440,20 @@ class MaskRCNN():
                 target_class_ids=target_class_ids2
                         
                 
-                    
+#             self.Lambda_callbacks = keras.callbacks.LambdaCallback(
+#             on_batch_end=lambda batch, logs: logs.update(
+#                 {'nmi': K.eval(NMI)}
+#             ))      
+
+            file_writer = tf.contrib.summary.create_file_writer(self.log_dir+ "/metrics")
+            file_writer.set_as_default()
+
+            self.Lambda_callbacks = keras.callbacks.LambdaCallback(
+            on_epoch_end=lambda epoch, logs: tf.summary.scalar('NMI', data=K.eval(NMI), step=epoch)
+            )    
+    
+            
+#             tf.summary.scalar('learning rate', data=learning_rate, step=epoch)
 
             print("mrcnn_class_logits",mrcnn_class_logits)
             print("mrcnn_class",mrcnn_class)
@@ -2634,6 +2667,16 @@ class MaskRCNN():
                 tf.reduce_mean(layer.output, keepdims=True)
                 * self.config.LOSS_WEIGHTS.get(name, 1.))
             self.keras_model.metrics_tensors.append(loss)
+        
+        vars_to_track=["lambda_nmi"]
+        for name in vars_to_track:
+            if name in self.keras_model.metrics_names:
+                continue
+            layer = self.keras_model.get_layer(name)
+            self.keras_model.metrics_names.append(name)
+            var_val = (
+                tf.reduce_mean(layer.output, keepdims=True))
+            self.keras_model.metrics_tensors.append(var_val)         
 
     def set_trainable(self, layer_regex, keras_model=None, indent=0, verbose=1):
         """Sets model layers as trainable if their names match
@@ -2779,14 +2822,18 @@ class MaskRCNN():
             keras.callbacks.ModelCheckpoint(self.checkpoint_path,
                                             verbose=0, save_weights_only=True),
             keras.callbacks.CSVLogger(filename=self.log_dir+'/csvlog.log', separator=",", append=False)
-#             keras.callbacks.callbacks.LambdaCallback(on_batch_end=lambdaCallbackFunc)
+#             keras.callbacks.LambdaCallback(on_batch_end=lambdaCallbackFunc)
         ]
         
 #         def lambdaCallbackFunc(batch, _):
 #             print(K.eval(self._model.optimizer.lr))
 
-        
+#         file_writer = tf.contrib.summary.create_file_writer(self.log_dir+ "/metrics")
+#         file_writer.set_as_default()
 
+        if self.Lambda_callbacks:
+            callbacks += [Lambda_callbacks]    
+        
         # Add custom callbacks to the list
         if custom_callbacks:
             callbacks += custom_callbacks
