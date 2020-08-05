@@ -210,6 +210,10 @@ class Config(object):
     # Gradient norm clipping
     GRADIENT_CLIP_NORM = 5.0
 
+    
+    assign_label_mode = "classification" # default is classificationa 
+    
+    
     def __init__(self):
         """Set values of computed attributes."""
         # Effective batch size

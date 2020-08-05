@@ -74,16 +74,20 @@ def _isArrayLike(obj):
 def convertAnnot2dict(dfInfo):
     dataset={}
     
+    pwsc_colName=dfInfo.columns[dfInfo.columns.str.contains('P-')].values[0]
+    loc_im_colNames=dfInfo.columns[dfInfo.columns.str.contains('im_Center')].tolist()
+    loc_colNames=dfInfo.columns[dfInfo.columns.str.contains('Center')].tolist()
     ########## form images dict
-    imageDf=pd.DataFrame(columns=['id','im_paths','P-W-S','height','width'])
-    imageDf[['id','im_paths','P-W-S','height','width']]=\
-    dfInfo[['image_id','im_paths','P-W-S','height','width']].drop_duplicates(ignore_index=True)
+    imageDf=pd.DataFrame(columns=['id','im_paths',pwsc_colName,'height','width']+loc_im_colNames)
+    imageDf[['id','im_paths',pwsc_colName,'height','width']+loc_im_colNames]=\
+    dfInfo[['image_id','im_paths',pwsc_colName,'height','width']+loc_im_colNames].drop_duplicates(ignore_index=True)
     dataset['images']=imageDf.to_dict(orient='records')
     
     
     ########## form annot dict
-    annotDf=pd.DataFrame(columns=['image_id','bbox','category_id','id','P-W-S','ObjectNumber','mask'])
-    annotDf[['image_id','bbox','category_id','P-W-S','ObjectNumber','mask']]=dfInfo[['image_id','bbox','cat_id','P-W-S','ObjectNumber','mask']]
+    annotDf=pd.DataFrame(columns=['image_id','bbox','category_id','id',pwsc_colName,'ObjectNumber','mask']+loc_colNames)
+    annotDf[['image_id','bbox','category_id',pwsc_colName,'ObjectNumber','mask']+loc_colNames]=\
+    dfInfo[['image_id','bbox','cat_id',pwsc_colName,'ObjectNumber','mask']+loc_colNames]
     annotDf['id']=annotDf.index+1
     dataset['annotations']=annotDf.to_dict(orient='records')
 #     print('hey',dataset['annotations'])

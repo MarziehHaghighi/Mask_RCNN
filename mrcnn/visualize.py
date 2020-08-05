@@ -47,8 +47,9 @@ def display_images(images, titles=None, cols=4, cmap=None, norm=None,
     rows = len(images) // cols + 1
     plt.figure(figsize=(14, 14 * rows // cols))
     i = 1
+#     akk=[]
     for image, title in zip(images, titles):
-        plt.subplot(rows, cols, i)
+        akk=plt.subplot(rows, cols, i)
         plt.title(title, fontsize=9)
         plt.axis('off')
         plt.imshow(image.astype(np.uint8), cmap=cmap,
@@ -115,11 +116,13 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     # If no axis is passed, create one and automatically call show()
     auto_show = False
     if not ax:
-        _, ax = plt.subplots(1,3, figsize=figsize)
+        _, ax = plt.subplots(1,3, figsize=figsize, sharex='all', sharey='all')
         auto_show = True
 
     # Generate random colors
-    colors = colors or random_colors(N)
+    uniq_cols=random_colors(len(class_names))
+#     colors = colors or random_colors(N)
+    colors=[uniq_cols[ci] for ci in class_ids]
 
     # Show area outside image boundaries.
     height, width = image.shape[:2]
@@ -156,11 +159,11 @@ def display_instances(image, boxes, masks, class_ids, class_names,
 #                 color="b"
             else:
                 label_color="w"
-            caption = "{} {:.3f}".format(label, score) if score else label
+            caption = "{} {:.2f}".format(label, score) if score else label
         else:
             caption = captions[i]
         ax[0].text(x1, y1 + 8, caption,
-                color=label_color, size=11, backgroundcolor="none")
+                color=label_color, size=8, backgroundcolor="none")
 
         # Mask
         mask = masks[:, :, i]
@@ -257,7 +260,9 @@ def display_instances2(image, boxes, masks, class_ids, class_names,
         auto_show = True
 
     # Generate random colors
-    colors = colors or random_colors(N)
+    uniq_cols=random_colors(len(class_names))
+#     colors = colors or random_colors(N)
+    colors=[uniq_cols[ci] for ci in class_ids]
 
     # Show area outside image boundaries.
     height, width = image.shape[:2]

@@ -73,7 +73,7 @@ class cellConfig(Config):
 
     # We use a GPU with 12GB memory, which can fit two images.
     # Adjust down if you use a smaller GPU.
-    IMAGES_PER_GPU = 4
+#     IMAGES_PER_GPU = 4
 
 #     config.IMAGE_SHAPE
     # Uncomment to train on 8 GPUs (default is 1)
@@ -84,15 +84,15 @@ class cellConfig(Config):
     # Train on 1 GPU and 8-->2 images per GPU. We can put multiple images on each
     # GPU because the images are small. Batch size is 8-->2 (GPUs * images/GPU).
     GPU_COUNT = 1
-    IMAGES_PER_GPU = 2
+    IMAGES_PER_GPU = 4
 
     # Number of classes (including background)
     NUM_CLASSES = 1 + 19  # background + 3 shapes
 
     # Use small images for faster training. Set the limits of the small side
     # the large side, and that determines the image shape.
-    IMAGE_MIN_DIM = 1024
-    IMAGE_MAX_DIM = 1024
+    IMAGE_MIN_DIM = 512#1024
+    IMAGE_MAX_DIM = 512#1024
 #     numOchannels=4;
     # Use smaller anchors because our image and objects are small
     RPN_ANCHOR_SCALES = (8,16, 32, 64,128)  # anchor side in pixels

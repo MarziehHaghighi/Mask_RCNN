@@ -975,14 +975,15 @@ def calculate_cluster_centroids(feat,labels,nClust):
     return cents  
     
 
-def reas_labels3(clustering_labels,pred_labels_arr,kmeans_centers,X,n_cl):
+# def reas_labels3(clustering_labels,pred_labels_arr,kmeans_centers,X,n_cl):
+def reas_labels3(clustering_labels,pred_labels_arr_cents,kmeans_centers,X,n_cl):
     from sklearn.neighbors import DistanceMetric
     dist = DistanceMetric.get_metric('euclidean')
 #     # a[nan_index_a,:]=np.nan
 #     b[nan_index_b,:]=np.nan
 #     clustering_labels_cents=calculate_cluster_centroids(X,clustering_labels)
 #     clustering_labels_cents=calculate_cluster_centroids(X,clustering_labels)
-    pred_labels_arr_cents=calculate_cluster_centroids(X,pred_labels_arr,n_cl+1)
+#     pred_labels_arr_cents=calculate_cluster_centroids(X,pred_labels_arr,n_cl+1)
     distMat=dist.pairwise(kmeans_centers,pred_labels_arr_cents[1:,:])
     distMat=distMat/np.nansum(distMat,axis=0)
     map_dict={}
@@ -1171,8 +1172,9 @@ def fpn_clustering_graph(rois, feature_maps, image_meta,
     # Classifier head
     mrcnn_class_logits = KL.TimeDistributed(KL.Dense(num_classes),name='mrcnn_class_logits')(shared)
     
-    
-    pred_class_ids = tf.argmax(mrcnn_class_logits, name="pred_4_lambda_layer", axis=2)
+    mrcnn_class_logits2 = tf.slice(mrcnn_class_logits, [0, 0,1], [-1, -1,4])
+    print("mrcnn_class_logits2",mrcnn_class_logits2)
+    pred_class_ids = tf.argmax(mrcnn_class_logits2, name="pred_4_lambda_layer", axis=2)
     print("pred_class_ids",pred_class_ids)
     sh = K.int_shape(mrcnn_class_logits)
     
@@ -1220,6 +1222,7 @@ def sklearn_kmeans_foreground(X,pred_class_ids,gt_ids,nClust):
 #     print("gt_ids",gt_ids)
     gt_ids_vec=gt_ids.flatten()
     feat_arr = X.reshape(n_samples,n_feats)
+    pred_class_ids=pred_class_ids+1
     pred_labels_arr = pred_class_ids.flatten()
 #         print("pred_labels_arr",pred_labels_arr)
 
@@ -1235,21 +1238,38 @@ def sklearn_kmeans_foreground(X,pred_class_ids,gt_ids,nClust):
     feat_arr_forg=feat_arr[forg_index,:]
 #     print("forg_index",forg_index,feat_arr_forg.shape)
     
+    pred_labels_arr_cents=calculate_cluster_centroids(feat_arr_forg,pred_labels_arr[forg_index],nClust)
+    
+    y = np.bincount(pred_labels_arr[forg_index])
+    ii = np.nonzero(y)[0]
+    print(np.vstack((ii,y[ii])).T)
+    
+    
     if len(forg_index)>nClust:
         kmeans = KMeans(n_clusters=nClust-1, random_state=0).fit(feat_arr_forg)
+        
+#         kmeans = KMeans(n_clusters=nClust-1,init=np.nan_to_num(pred_labels_arr_cents[1:,:])).fit(feat_arr_forg)
         psudo_labels_based_on_clustering[forg_index]=kmeans.labels_+1
     else:
         psudo_labels_based_on_clustering[forg_index]=pred_labels_arr[forg_index]
         
         
-    if len(forg_index)>0:
+    if len(forg_index)>nClust:
 #         reassigned_labels=reas_labels2(psudo_labels_based_on_clustering[forg_index],\
 #                                        pred_labels_arr[forg_index])
 
+#         reassigned_labels=reas_labels3(kmeans.labels_,\
+#                                        pred_labels_arr[forg_index],kmeans.cluster_centers_,feat_arr_forg,nClust-1)
         reassigned_labels=reas_labels3(kmeans.labels_,\
-                                       pred_labels_arr[forg_index],kmeans.cluster_centers_,feat_arr_forg,nClust-1)
+                                       pred_labels_arr_cents,kmeans.cluster_centers_,feat_arr_forg,nClust-1)
+
 # (clustering_labels,kmeans_centers,X)
         psudo_labels_based_on_clustering[forg_index]=reassigned_labels
+    
+    y = np.bincount(psudo_labels_based_on_clustering[forg_index].astype('int64'))
+    ii = np.nonzero(y)[0]
+    print("psudo labels",np.vstack((ii,y[ii])).T)
+    
     
     psudo_labels_based_on_clustering_reshaped=psudo_labels_based_on_clustering.\
     reshape(X.shape[0],X.shape[1]).astype('int32')
@@ -1294,7 +1314,7 @@ def sklearn_kmeans(X,pred_class_ids,gt_ids):
     cents= calculate_cluster_centroids(feat_arr,pred_labels_arr)    
 #         print(cents)            
 #         kmeans = KMeans(n_clusters=nClust, random_state=0,init=cents).fit(feat_arr)
-    kmeans = KMeans(n_clusters=nClust, random_state=0).fit(feat_arr)
+    kmeans = KMeans(n_clusters=nClust).fit(feat_arr)
 
     bkg_c_i=find_background_cluster(np.mean(feat_arr[gt_ids_vec==0,:],axis=0),\
                                     kmeans.cluster_centers_)        
@@ -1612,6 +1632,9 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
     # Load image and mask
     image = dataset.load_image(image_id)
     mask, class_ids = dataset.load_mask(image_id)
+#     print('m1',mask.shape)
+#     print('i1',image.shape)
+    
     original_shape = image.shape
     image, window, scale, padding, crop = utils.resize_image(
         image,
@@ -1620,7 +1643,8 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
         max_dim=config.IMAGE_MAX_DIM,
         mode=config.IMAGE_RESIZE_MODE)
     mask = utils.resize_mask(mask, scale, padding, crop)
-
+#     print('m2',mask.shape)
+#     print('i2',image.shape)
     # Random horizontal flips.
     # TODO: will be removed in a future update in favor of augmentation
     if augment:
@@ -2781,8 +2805,8 @@ class MaskRCNN():
                     imgaug.augmenters.Fliplr(0.5),
                     imgaug.augmenters.GaussianBlur(sigma=(0.0, 5.0))
                 ])
-	    custom_callbacks: Optional. Add custom callbacks to be called
-	        with the keras fit_generator method. Must be list of type keras.callbacks.
+        custom_callbacks: Optional. Add custom callbacks to be called
+        with the keras fit_generator method. Must be list of type keras.callbacks.
         no_augmentation_sources: Optional. List of sources to exclude for
             augmentation. A source is string that identifies a dataset and is
             defined in the Dataset class.
@@ -2820,7 +2844,7 @@ class MaskRCNN():
             keras.callbacks.TensorBoard(log_dir=self.log_dir,
                                         histogram_freq=0, write_graph=True, write_images=False),
             keras.callbacks.ModelCheckpoint(self.checkpoint_path,
-                                            verbose=0, save_weights_only=True),
+                                            verbose=0, save_weights_only=True,save_best_only=True,monitor='val_loss'),#val_mrcnn_class_loss'
             keras.callbacks.CSVLogger(filename=self.log_dir+'/csvlog.log', separator=",", append=False)
 #             keras.callbacks.LambdaCallback(on_batch_end=lambdaCallbackFunc)
         ]
