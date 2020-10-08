@@ -69,8 +69,9 @@ class spotConfig(Config):
     to the COCO dataset.
     """
     # Give the configuration a recognizable name
-    NAME = "spot"
+    NAME = "spotsISS"
 
+    BACKBONE = "resnet50"
     # We use a GPU with 12GB memory, which can fit two images.
     # Adjust down if you use a smaller GPU.
 #     IMAGES_PER_GPU = 4
@@ -84,7 +85,7 @@ class spotConfig(Config):
     # Train on 1 GPU and 8-->2 images per GPU. We can put multiple images on each
     # GPU because the images are small. Batch size is 8-->2 (GPUs * images/GPU).
     GPU_COUNT = 1
-    IMAGES_PER_GPU = 12
+    IMAGES_PER_GPU = 8
 
     # Number of classes (including background)
     NUM_CLASSES = 1 + 4  # background + 4 bases
@@ -95,16 +96,16 @@ class spotConfig(Config):
     IMAGE_MAX_DIM = 256#1024
 #     numOchannels=4;
     # Use smaller anchors because our image and objects are small
-    RPN_ANCHOR_SCALES = (2,4,8,16)  # anchor side in pixels
+    RPN_ANCHOR_SCALES = (2,4,8)  # anchor side in pixels
 #    RPN_ANCHOR_SCALES = (32, 64,128,256)  # anchor side in pixels
     # Reduce training ROIs per image because the images are small and have
     # few objects. Aim to allow ROI sampling to pick 33% positive ROIs.
-    BACKBONE_STRIDES = [4, 8, 16, 32, 64]
+#     BACKBONE_STRIDES = [4, 8, 16, 32, 64]
     
 #     TRAIN_ROIS_PER_IMAGE = 128
 
-#     FPN_CLASSIF_FC_LAYERS_SIZE=128;
-    TRAIN_ROIS_PER_IMAGE = 32*2
+    FPN_CLASSIF_FC_LAYERS_SIZE=512;
+    TRAIN_ROIS_PER_IMAGE = 32*3
     
     # Use a small epoch since the data is simple
     STEPS_PER_EPOCH = 100
@@ -113,10 +114,10 @@ class spotConfig(Config):
     VALIDATION_STEPS = 5
 #    head='def'; #'def','unet'
 
-    MAX_GT_INSTANCES = 500 #? check this
+    MAX_GT_INSTANCES = 100 #? check this
     IMAGE_CHANNEL_COUNT = 4
 
-    USE_MINI_MASK = False
+#     USE_MINI_MASK = False
     # Image mean (RGB)
 #     MEAN_PIXEL = np.array([123.7, 116.8, 103.9])
 #     MEAN_PIXEL =np.ones((IMAGE_CHANNEL_COUNT,), dtype=int)*128;
@@ -226,13 +227,13 @@ class spotsDataset(utils.Dataset):
             im_uint16=skimage.io.imread(imPath) # images are 'uint16'
         # if you want to convert to unit8
             im_uint8=img_as_ubyte(im_uint16)
-            im_uint8=(im_uint8/im_uint8.max())*255
+            im_uint8=((im_uint8/im_uint8.max())*255).astype(np.uint8)
             imagesList.append(im_uint8)
         # If grayscale. Convert to RGB for consistency.
 #         if image.ndim != 3:
 #             image = skimage.color.gray2rgb(image)
         image=np.stack(imagesList, axis=-1)
-    
+#         print(image.dtype)
 #         image=(image/image.max())*255
     
         cropped_im_dim=256;
@@ -254,7 +255,7 @@ class spotsDataset(utils.Dataset):
              (0, 0)),'constant', constant_values=(0))
         else:
             cr_image_corr=cr_image
-            
+#         print(cr_image_corr.dtype)   
         return cr_image_corr
 
     def load_mask2(self, image_id):
@@ -391,6 +392,9 @@ class spotsDataset(utils.Dataset):
 #                 rr, cc = circle(center_x,center_y, radius=bbox_half_len)
                 rr[rr>cropped_im_dim-1]=cropped_im_dim-1
                 cc[cc>cropped_im_dim-1]=cropped_im_dim-1
+        
+                rr[rr<0]=0
+                cc[cc<0]=0
 #                     rr, cc = circle(center_x,center_y, radius=bbox_half_len)
                 OneHot2D_instance_mask[cc,rr] = 1
 #                 print(annotation['P-W-S'],annotation['ObjectNumber'])

@@ -49,7 +49,10 @@ def display_images(images, titles=None, cols=4, cmap=None, norm=None,
     i = 1
 #     akk=[]
     for image, title in zip(images, titles):
-        akk=plt.subplot(rows, cols, i)
+        if i==1:
+            akk=plt.subplot(rows, cols, i)
+        else:
+            plt.subplot(rows, cols, i,sharex = akk,sharey = akk)            
         plt.title(title, fontsize=9)
         plt.axis('off')
         plt.imshow(image.astype(np.uint8), cmap=cmap,

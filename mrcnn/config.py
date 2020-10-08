@@ -8,7 +8,7 @@ Written by Waleed Abdulla
 """
 
 import numpy as np
-
+import json
 
 # Base Configuration Class
 # Don't use this class directly. Instead, sub-class it and override
@@ -238,3 +238,11 @@ class Config(object):
             if not a.startswith("__") and not callable(getattr(self, a)):
                 print("{:30} {}".format(a, getattr(self, a)))
         print("\n")
+        
+    def toDict(self):
+        dict_v={}
+        for a in dir(self):
+            if not a.startswith("__") and not callable(getattr(self, a)):
+                dict_v[a]=getattr(self, a)     
+        
+        return dict_v

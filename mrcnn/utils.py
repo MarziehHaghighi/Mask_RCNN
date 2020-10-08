@@ -906,7 +906,166 @@ def resize(image, output_shape, order=1, mode='constant', cval=0, clip=True,
             image, output_shape,
             order=order, mode=mode, cval=cval, clip=clip,
             preserve_range=preserve_range)
+
     
+def calculate_cluster_centroids(feat,labels,nClust):
+    # feat (n_samples,n_features)
+    # labels (n_samples,)
+#     nClust=np.max(labels)+1
+    cents=np.empty((nClust,feat.shape[1]))
+    cents[:] = np.nan
+    for c in range(nClust):
+        class_samples=feat[labels==c,:]
+        if class_samples.shape[0]!=0:
+            cents[c,:]=np.mean(class_samples,axis=0)
+    return cents  
+    
+
+# def reas_labels3(clustering_labels,pred_labels_arr,kmeans_centers,X,n_cl):
+def reas_labels3(clustering_labels,pred_labels_arr_cents,kmeans_centers,X,n_cl):
+    from sklearn.neighbors import DistanceMetric
+    dist = DistanceMetric.get_metric('euclidean')
+#     # a[nan_index_a,:]=np.nan
+#     b[nan_index_b,:]=np.nan
+#     clustering_labels_cents=calculate_cluster_centroids(X,clustering_labels)
+#     clustering_labels_cents=calculate_cluster_centroids(X,clustering_labels)
+#     pred_labels_arr_cents=calculate_cluster_centroids(X,pred_labels_arr,n_cl+1)
+    distMat=dist.pairwise(kmeans_centers,pred_labels_arr_cents[1:,:])
+    distMat=distMat/np.nansum(distMat,axis=0)
+    map_dict={}
+    ordered_ass=np.argsort(distMat,axis=1)
+    min_dist_clusters=np.nanargmin(distMat,axis=1)
+    min_dist=np.nanmin(distMat,axis=1)
+    confid_ordered_labels = np.argsort(min_dist)
+    # non_nan_indexes=np.delete(range(5), 1)
+    non_nan_indexes=list(range(n_cl))
+    for ci in range(n_cl):
+    #     min_dist_clusters[ci]
+        ind_cluster_to_ass=confid_ordered_labels[ci]
+        if min_dist_clusters[ind_cluster_to_ass] in non_nan_indexes:
+            map_dict[ind_cluster_to_ass]=min_dist_clusters[ind_cluster_to_ass]
+            non_nan_indexes.remove(min_dist_clusters[ind_cluster_to_ass])
+        else:
+            i=1
+            while ordered_ass[ind_cluster_to_ass,i] not in non_nan_indexes:
+                i += 1
+    #         for i in range(1,5):
+            to_cl=ordered_ass[ind_cluster_to_ass,i]
+            map_dict[ind_cluster_to_ass]=to_cl
+            non_nan_indexes.remove(to_cl)
+
+#     print(map_dict,clustering_labels)
+    reassigned_labels=np.vectorize(map_dict.get)(clustering_labels)
+#     print(reassigned_labels)
+    return reassigned_labels+1
+
+
+def reas_labels2(clustering_labels,pred_labels_arr):
+    from sklearn.neighbors import DistanceMetric
+    dist = DistanceMetric.get_metric('hamming')
+#     print(utils.NMI_clus_class(clustering_labels,pred_labels_arr))
+#     print("shape",clustering_labels,pred_labels_arr)
+    map_dict={}
+    clus_uniq_labels=np.unique(clustering_labels)
+    clus_uniq_labels_list=list(clus_uniq_labels)
+    n_clus=len(clus_uniq_labels)
+    haming_based_clus=[]
+    for ci in range(n_clus):
+        clustering_labels_binary=100*np.ones(clustering_labels.shape)
+        c=clus_uniq_labels[ci]
+        clustering_labels_binary[clustering_labels==c]=1
+        haming_bin_clus=[]
+        for ci2 in range(len(clus_uniq_labels_list)):
+            pred_labels_arr_binary=100*np.ones(clustering_labels.shape)
+            c2=clus_uniq_labels_list[ci2]
+            pred_labels_arr_binary[pred_labels_arr==c2]=1        
+            haming_bin_clus.append(dist.pairwise([pred_labels_arr_binary,clustering_labels_binary])[0,1])
+        
+        best_cluster_based_on_haming=clus_uniq_labels_list[np.argmin(haming_bin_clus)]
+        clus_uniq_labels_list.remove(best_cluster_based_on_haming)
+        
+#         print("haming_bin_clus",haming_bin_clus)
+        haming_based_clus.append(best_cluster_based_on_haming)
+        map_dict[c]=best_cluster_based_on_haming
+        
+#     print("map_dict",map_dict)
+#     print("clustering_labels",clustering_labels)
+    reassigned_labels=np.vectorize(map_dict.get)(clustering_labels)
+    return reassigned_labels
+
+def reas_labels(clustering_labels, pred_labels_arr, bkg_c_i):
+    from sklearn.neighbors import DistanceMetric
+    dist = DistanceMetric.get_metric('hamming')
+#     print("shape",clustering_labels,pred_labels_arr)
+    map_dict={}
+    map_dict[bkg_c_i]=0
+    clus_uniq_labels=np.unique(clustering_labels)
+    clus_uniq_labels_list=list(clus_uniq_labels)
+    clus_uniq_labels_list.remove(0)
+#     print(clus_uniq_labels_list)
+    print(clus_uniq_labels,bkg_c_i)
+    clus_uniq_labels=clus_uniq_labels[clus_uniq_labels!=bkg_c_i]
+#     print(clus_uniq_labels,bkg_c_i)
+    n_clus=len(clus_uniq_labels)
+    haming_based_clus=[]
+    for ci in range(n_clus):
+        clustering_labels_binary=100*np.ones(clustering_labels.shape)
+        c=clus_uniq_labels[ci]
+        clustering_labels_binary[clustering_labels==c]=1
+        haming_bin_clus=[]
+        for ci2 in range(len(clus_uniq_labels_list)):
+            pred_labels_arr_binary=100*np.ones(clustering_labels.shape)
+            c2=clus_uniq_labels_list[ci2]
+            pred_labels_arr_binary[pred_labels_arr==c2]=1        
+            haming_bin_clus.append(dist.pairwise([pred_labels_arr_binary,clustering_labels_binary])[0,1])
+        
+        best_cluster_based_on_haming=clus_uniq_labels_list[np.argmin(haming_bin_clus)]
+        clus_uniq_labels_list.remove(best_cluster_based_on_haming)
+        
+#         print("haming_bin_clus",haming_bin_clus)
+        haming_based_clus.append(best_cluster_based_on_haming)
+        map_dict[c]=best_cluster_based_on_haming
+        
+    print("map_dict",map_dict)
+    reassigned_labels=np.vectorize(map_dict.get)(clustering_labels)
+#     print("haming_based_clus",haming_based_clus)
+#     print("clustering_labels",clustering_labels)
+
+#     print("reassigned_labels",reassigned_labels)
+    return reassigned_labels
+    
+def reas_labels_cent(clustering_labels,pred_labels_arr):
+    from sklearn.neighbors import DistanceMetric
+    dist = DistanceMetric.get_metric('hamming')
+#     print("shape",clustering_labels,pred_labels_arr)
+    map_dict={}
+    clus_uniq_labels=np.unique(clustering_labels)
+    clus_uniq_labels_list=list(clus_uniq_labels)
+    n_clus=len(clus_uniq_labels)
+    haming_based_clus=[]
+    for ci in range(n_clus):
+        clustering_labels_binary=100*np.ones(clustering_labels.shape)
+        c=clus_uniq_labels[ci]
+        clustering_labels_binary[clustering_labels==c]=1
+        haming_bin_clus=[]
+        for ci2 in range(len(clus_uniq_labels_list)):
+            pred_labels_arr_binary=100*np.ones(clustering_labels.shape)
+            c2=clus_uniq_labels_list[ci2]
+            pred_labels_arr_binary[pred_labels_arr==c2]=1        
+            haming_bin_clus.append(dist.pairwise([pred_labels_arr_binary,clustering_labels_binary])[0,1])
+        
+        best_cluster_based_on_haming=clus_uniq_labels_list[np.argmin(haming_bin_clus)]
+        clus_uniq_labels_list.remove(best_cluster_based_on_haming)
+        
+#         print("haming_bin_clus",haming_bin_clus)
+        
+        haming_based_clus.append(best_cluster_based_on_haming)
+        map_dict[ci]=best_cluster_based_on_haming
+    reassigned_labels=np.vectorize(map_dict.get)(clustering_labels)
+#     print("haming_based_clus",haming_based_clus)
+#     print("map_dict",map_dict)
+#     print("reassigned_labels",reassigned_labels)
+    return reassigned_labels    
     
 def NMI_clus_class(target_class_ids,target_class_ids2):
 #     print("target_class_ids",target_class_ids)
@@ -917,11 +1076,22 @@ def NMI_clus_class(target_class_ids,target_class_ids2):
         sh=target_class_ids.shape
         target_class_ids=target_class_ids.reshape(sh[0]*sh[1],)
         target_class_ids2=target_class_ids2.reshape(sh[0]*sh[1],)
+        print(target_class_ids.shape)
+        target_class_ids=target_class_ids[target_class_ids>0]
+        target_class_ids2=target_class_ids2[target_class_ids2>0]
+        print(target_class_ids,target_class_ids.shape)
+        print(target_class_ids2,target_class_ids2.shape)
 #     print(target_class_ids)
 #     print(normalized_mutual_info_score(target_class_ids,target_class_ids2))
 
-    if list(target_class_ids)==list(target_class_ids2):
+#     if list(target_class_ids)==list(target_class_ids2):
+    if target_class_ids.shape[0]<2:
         nmi=np.float32(1)
     else:
-        nmi=normalized_mutual_info_score(target_class_ids,target_class_ids2).astype('float32')
+        nmi=normalized_mutual_info_score(target_class_ids,target_class_ids2)#.astype('float32')
+        print('nmi',nmi)
+        if nmi!=1:
+            nmi=nmi.astype('float32')
+        else:
+            nmi=np.float32(1)
     return nmi
