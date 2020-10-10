@@ -169,6 +169,43 @@ def conv_block(input_tensor, kernel_size, filters, stage, block,
     return x
 
 
+# def resnet_graph(input_image, architecture, stage5=False, train_bn=True):
+#     """Build a ResNet graph.
+#         architecture: Can be resnet50 or resnet101
+#         stage5: Boolean. If False, stage5 of the network is not created
+#         train_bn: Boolean. Train or freeze Batch Norm layers
+#     """
+#     assert architecture in ["resnet50", "resnet101"]
+#     # Stage 1
+#     x = KL.ZeroPadding2D((3, 3))(input_image)
+#     x = KL.Conv2D(64, (7, 7), strides=(2, 2), name='conv1', use_bias=True)(x)
+#     x = BatchNorm(name='bn_conv1')(x, training=train_bn)
+#     x = KL.Activation('relu')(x)
+#     C1 = x = KL.MaxPooling2D((3, 3), strides=(2, 2), padding="same")(x)
+#     # Stage 2
+#     x = conv_block(x, 3, [64, 64, 256], stage=2, block='a', strides=(1, 1), train_bn=train_bn)
+#     x = identity_block(x, 3, [64, 64, 256], stage=2, block='b', train_bn=train_bn)
+#     C2 = x = identity_block(x, 3, [64, 64, 256], stage=2, block='c', train_bn=train_bn)
+#     # Stage 3
+#     x = conv_block(x, 3, [128, 128, 512], stage=3, block='a', train_bn=train_bn)
+#     x = identity_block(x, 3, [128, 128, 512], stage=3, block='b', train_bn=train_bn)
+#     x = identity_block(x, 3, [128, 128, 512], stage=3, block='c', train_bn=train_bn)
+#     C3 = x = identity_block(x, 3, [128, 128, 512], stage=3, block='d', train_bn=train_bn)
+#     # Stage 4
+#     x = conv_block(x, 3, [256, 256, 1024], stage=4, block='a', train_bn=train_bn)
+#     block_count = {"resnet50": 5, "resnet101": 22}[architecture]
+#     for i in range(block_count):
+#         x = identity_block(x, 3, [256, 256, 1024], stage=4, block=chr(98 + i), train_bn=train_bn)
+#     C4 = x
+#     # Stage 5
+#     if stage5:
+#         x = conv_block(x, 3, [512, 512, 2048], stage=5, block='a', train_bn=train_bn)
+#         x = identity_block(x, 3, [512, 512, 2048], stage=5, block='b', train_bn=train_bn)
+#         C5 = x = identity_block(x, 3, [512, 512, 2048], stage=5, block='c', train_bn=train_bn)
+#     else:
+#         C5 = None
+#     return [C1, C2, C3, C4, C5]
+
 def resnet_graph(input_image, architecture, stage5=False, train_bn=True):
     """Build a ResNet graph.
         architecture: Can be resnet50 or resnet101
@@ -205,7 +242,6 @@ def resnet_graph(input_image, architecture, stage5=False, train_bn=True):
     else:
         C5 = None
     return [C1, C2, C3, C4, C5]
-
 
 ############################################################
 #  Proposal Layer
@@ -1180,7 +1216,7 @@ def sklearn_kmeans_foreground(X,pred_class_ids,gt_ids,nClust):
     from sklearn.cluster import KMeans
     from sklearn import preprocessing
     from sklearn.decomposition import PCA    
-    #     inputs
+    # inputs
     # X              (n_batches, n_samples_perbacth, n_features)
     # feat_arr       (n_samples, n_features)
     # gt_ids         (n_batches, n_samples_perbacth)
@@ -1196,10 +1232,11 @@ def sklearn_kmeans_foreground(X,pred_class_ids,gt_ids,nClust):
 #     print("gt_ids",gt_ids)
     gt_ids_vec=gt_ids.flatten()
     feat_arr = X.reshape(n_samples,n_feats)
+#     pred_labels_nonZero=np.argmax(feat_arr[:,1:],1).flatten()
     pred_class_ids=pred_class_ids+1
     pred_labels_arr = pred_class_ids.flatten()
-#         print("pred_labels_arr",pred_labels_arr)
-
+    print("pred_labels_arr",pred_labels_arr)
+#     print("pred_labels_nonZ",pred_labels_nonZero)
     if 1:
         pca = PCA(n_components=64, whiten=True)
         x_pca=pca.fit_transform(feat_arr)
@@ -1234,12 +1271,18 @@ def sklearn_kmeans_foreground(X,pred_class_ids,gt_ids,nClust):
 
 # #         reassigned_labels=reas_labels3(kmeans.labels_,\
 # #                                        pred_labels_arr[forg_index],kmeans.cluster_centers_,feat_arr_forg,nClust-1)
-        reassigned_labels=utils.reas_labels3(kmeans.labels_,\
-                                       pred_labels_arr_cents,kmeans.cluster_centers_,feat_arr_forg,nClust-1)
+#         reassigned_labels=utils.reas_labels3(kmeans.labels_,\
+#                                        pred_labels_arr_cents,kmeans.cluster_centers_,feat_arr_forg,nClust-1)
+    
+        reassigned_labels=utils.reas_labels4(kmeans.labels_,\
+                                               pred_labels_arr[forg_index]-1,nClust-1)        
 
 #         reassigned_labels=kmeans.labels_+1
 # (clustering_labels,kmeans_centers,X)
         psudo_labels_based_on_clustering[forg_index]=reassigned_labels
+    
+    
+    
     
     y = np.bincount(psudo_labels_based_on_clustering[forg_index].astype('int64'))
     ii = np.nonzero(y)[0]

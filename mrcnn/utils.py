@@ -18,6 +18,7 @@ import scipy
 import skimage.color
 import skimage.io
 import skimage.transform
+import sklearn
 import urllib.request
 import shutil
 import warnings
@@ -920,6 +921,51 @@ def calculate_cluster_centroids(feat,labels,nClust):
             cents[c,:]=np.mean(class_samples,axis=0)
     return cents  
     
+    
+def reas_labels4(clustering_labels,pred_labels_forg,n_cl):
+    y_pred, _ = get_y_preds(clustering_labels,pred_labels_forg, n_cl);
+#     print("clustering_labels",clustering_labels)
+#     print("pred_labels_forg",pred_labels_forg)
+#     print("y_pred",y_pred+1)
+    return y_pred.astype(int)+1
+
+from munkres import Munkres
+def get_y_preds(cluster_assignments, y_true, n_clusters):
+    '''
+    Computes the predicted labels, where label assignments now
+    correspond to the actual labels in y_true (as estimated by Munkres)
+
+    cluster_assignments:    array of labels, outputted by kmeans
+    y_true:                 true labels
+    n_clusters:             number of clusters in the dataset
+
+    returns:    a tuple containing the accuracy and confusion matrix,
+                in that order
+    '''
+    confusion_matrix = sklearn.metrics.confusion_matrix(y_true, cluster_assignments, labels=None)
+    # compute accuracy based on optimal 1:1 assignment of clusters to labels
+    cost_matrix = calculate_cost_matrix(confusion_matrix, n_clusters)
+    indices = Munkres().compute(cost_matrix)
+    kmeans_to_true_cluster_labels = get_cluster_labels_from_indices(indices)
+    y_pred = kmeans_to_true_cluster_labels[cluster_assignments]
+    return y_pred, confusion_matrix 
+def calculate_cost_matrix(C, n_clusters):
+    cost_matrix = np.zeros((n_clusters, n_clusters))
+
+    # cost_matrix[i,j] will be the cost of assigning cluster i to label j
+    for j in range(n_clusters):
+        s = np.sum(C[:,j]) # number of examples in cluster i
+        for i in range(n_clusters):
+            t = C[i,j]
+            cost_matrix[j,i] = s-t
+    return cost_matrix
+def get_cluster_labels_from_indices(indices):
+    n_clusters = len(indices)
+    clusterLabels = np.zeros(n_clusters)
+    for i in range(n_clusters):
+        clusterLabels[i] = indices[i][1]
+    return clusterLabels
+
 
 # def reas_labels3(clustering_labels,pred_labels_arr,kmeans_centers,X,n_cl):
 def reas_labels3(clustering_labels,pred_labels_arr_cents,kmeans_centers,X,n_cl):
